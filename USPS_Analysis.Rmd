@@ -1,0 +1,184 @@
+---
+title: "CMSC320 Fianl Project: USPS Analysis"
+output: html_document
+---
+
+_Van-Nhan Nguyen_
+
+_05-18-2018_
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Motivation
+
+## Data Curation, Parsing, and Management
+
+http://selectorgadget.com/
+```{r scrape_revenue_data, message=FALSE}
+library(rvest) #rvest helps you scrape information from web pages
+
+url <- "https://about.usps.com/who-we-are/postal-history/pieces-of-mail-since-1789.htm"
+usps_revenue <- url %>%
+  read_html() %>%
+  html_nodes(".MsoNormalTable") %>%
+  html_table()
+
+usps_revenue <- usps_revenue[[1]]
+
+head(usps_revenue)
+```
+
+![an image of untidy data immediately after scraping](./untidy.JPG)
+
+```{r tidy_revenue_data, message=FALSE}
+#Removes extraneous special characters from the the Income and Expenses attributes
+usps_revenue$Income <- gsub("[^0-9]", "", usps_revenue$Income)
+usps_revenue$Expenses <- gsub("[^0-9]", "", usps_revenue$Expenses)
+
+#Replaces each Year entry that is not a numeric year with 'NA' and then removes these parked rows
+usps_revenue$Year <- gsub("^[a-zA-Z].+", "NA", usps_revenue$Year)
+usps_revenue <- usps_revenue[usps_revenue$Year != "NA" & usps_revenue$Year != "NA",]
+
+#Renames the 2nd and 3rd attributes so that they do not include spaces; this makes refering to them easier via the dataframe$attribute syntax
+colnames(usps_revenue)[2] <- "Mail_Handled"
+colnames(usps_revenue)[3] <- "Post_Offices"
+
+#Converts the unit of each atrribute to its intended unit (i.e. Year(character) -> Year(Integer))
+usps_revenue$Income <- as.character(usps_revenue$Income)
+usps_revenue$Expenses <- as.character(usps_revenue$Expenses)
+usps_revenue <- readr::type_convert(usps_revenue)
+
+usps_revenue
+```
+
+For this analysis, we'll want to add a bit more information. Luckily, the USPS archieves also offer infomration about employees since 1926
+```{r scrape_employee_data, message=FALSE}
+url <- "https://about.usps.com/who-we-are/postal-history/employees-since-1926.htm"
+usps_employee <- url %>%
+  read_html() %>%
+  html_nodes(".MsoNormalTable") %>%
+  html_table()
+
+usps_employee <- usps_employee[[1]]
+
+colnames(usps_employee)[2] <- "Num_Employees"
+usps_employee$Num_Employees <- gsub("[^0-9]", "", usps_employee$Num_Employees)
+usps_employee$Num_Employees <- as.integer(usps_employee$Num_Employees)
+
+usps_employee
+```
+
+```{r join_tables, message=FALSE}
+library(dplyr)
+
+usps_stats <- usps_revenue %>%
+  left_join(usps_employee, by="Year")
+
+usps_stats
+```
+
+
+## Exploratory Data Analysis
+
+```{r income_expenses, message=FALSE}
+library(ggplot2)
+
+ggplot() + 
+  geom_point(data = usps_stats, aes(x = Year, y = Income), color='green') + 
+  geom_point(data = usps_stats, aes(x = Year, y = Expenses), color='red') +
+  ggtitle("USPS Income and Expenses vs Year") +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(x = "Year", y = "Dollars")
+```
+
+```{r calculate_profit, message=FALSE}
+usps_stats <- mutate(usps_stats, Profit = usps_stats$Income - usps_stats$Expenses)
+usps_stats
+
+usps_stats %>%
+  ggplot(aes(x = Year, y = Profit)) +
+    geom_point(aes(colour=Year)) +
+    ggtitle("USPS Profit vs Year") +
+    scale_y_continuous(labels = scales::dollar) +
+    labs(x = "Year", y = "Profit") 
+    #geom_smooth(method=loess, color='green') +
+    #geom_smooth(method=lm, color='red')
+```
+
+
+```{r standardization, message=FALSE}
+options(warn = -1)
+
+usps_std <- usps_stats
+range <- mutate(usps_stats, Year_Range = cut(Year, breaks=5))
+range <- split(range, range$Year_Range)
+
+ggplot() + 
+  geom_boxplot(data = range[[1]], aes(x = Year, y = Profit), color='green') +
+  geom_boxplot(data = range[[2]], aes(x = Year, y = Profit), color='red') +
+  geom_boxplot(data = range[[3]], aes(x = Year, y = Profit), color='blue') +
+  geom_boxplot(data = range[[4]], aes(x = Year, y = Profit), color='purple') +
+  geom_boxplot(data = range[[5]], aes(x = Year, y = Profit), color='orange') +
+  ggtitle("USPS Income and Expenses vs Year (1994 - 2017)") +
+  scale_y_continuous(labels = scales::dollar) +
+  labs(x = "Year", y = "Income(Green)  and  Expenses(Red)")
+
+usps_std <- mutate(usps_std, Mean = 0)
+usps_std <- mutate(usps_std, Std_Dev = 0)
+
+mean <- mean(range[[1]]$Profit)
+sd <- sd(range[[1]]$Profit)
+usps_std$Mean[usps_std$Year <= 1830] <- mean
+usps_std$Std_Div[usps_std$Year <= 1830] <- sd
+
+mean <- mean(range[[2]]$Profit)
+sd <- sd(range[[2]]$Profit)
+usps_std$Mean[usps_std$Year > 1830 & usps_std$Year <= 1880] <- mean
+usps_std$Std_Div[usps_std$Year > 1830 & usps_std$Year <= 1880] <- sd
+
+mean <- mean(range[[3]]$Profit)
+sd <- sd(range[[3]]$Profit)
+usps_std$Mean[usps_std$Year > 1880 & usps_std$Year <= 1930] <- mean
+usps_std$Std_Div[usps_std$Year > 1880 & usps_std$Year <= 1930] <- sd
+
+mean <- mean(range[[4]]$Profit)
+sd <- sd(range[[4]]$Profit)
+usps_std$Mean[usps_std$Year > 1930 & usps_std$Year <= 1970] <- mean
+usps_std$Std_Div[usps_std$Year > 1930 & usps_std$Year <= 1970] <- sd
+
+mean <- mean(range[[5]]$Profit)
+sd <- sd(range[[5]]$Profit)
+usps_std$Mean[usps_std$Year > 1970] <- mean
+usps_std$Std_Div[usps_std$Year > 1970] <- sd
+
+usps_std <- mutate(usps_std, Std_Profit = (Mean - Profit)/Std_Div)
+
+usps_std
+```
+
+```{r standard_plot, message=FALSE}
+usps_std %>%
+  ggplot(aes(x = Year, y = Std_Profit)) +
+    geom_point(aes(colour=Year)) +
+    ggtitle("USPS Standardized Profit vs Year") +
+    scale_y_continuous(labels = scales::dollar) +
+    labs(x = "Year", y = "Standard Profit") 
+```
+
+```{r standard_recent, message=FALSE}
+usps_std <- usps_std[usps_std$Year >= 1994,]
+
+usps_std %>%
+  ggplot(aes(x = Year, y = Std_Profit)) +
+    geom_point(aes(colour=Year)) +
+    ggtitle("USPS Standardized Profit vs Year (1994 - 2017)") +
+    scale_y_continuous(labels = scales::dollar) +
+    labs(x = "Year", y = "Standard Profit") +
+    geom_smooth(method=lm, color='red')
+```
+
+
+
+
